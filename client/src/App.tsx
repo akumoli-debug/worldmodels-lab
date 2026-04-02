@@ -5,14 +5,9 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
-import Dashboard from "@/pages/dashboard";
-import Environments from "@/pages/environments";
-import EnvironmentDetail from "@/pages/environment-detail";
-import Models from "@/pages/models";
-import ModelDetail from "@/pages/model-detail";
-import Compare from "@/pages/compare";
-import Sandbox from "@/pages/sandbox";
 import Creator from "@/pages/creator";
+import RolloutViewer from "@/pages/rollout-viewer";
+import Leaderboard from "@/pages/leaderboard";
 import Resources from "@/pages/resources";
 import AppLayout from "@/components/app-layout";
 
@@ -20,14 +15,9 @@ function AppRouter() {
   return (
     <AppLayout>
       <Switch>
-        <Route path="/" component={Dashboard} />
-        <Route path="/environments" component={Environments} />
-        <Route path="/environments/:slug" component={EnvironmentDetail} />
-        <Route path="/models" component={Models} />
-        <Route path="/models/:slug" component={ModelDetail} />
-        <Route path="/compare" component={Compare} />
-        <Route path="/sandbox" component={Sandbox} />
-        <Route path="/create" component={Creator} />
+        <Route path="/" component={Creator} />
+        <Route path="/rollouts" component={RolloutViewer} />
+        <Route path="/leaderboard" component={Leaderboard} />
         <Route path="/resources" component={Resources} />
         <Route component={NotFound} />
       </Switch>

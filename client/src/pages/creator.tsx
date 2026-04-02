@@ -20,7 +20,7 @@ import {
   Wand2,
   AlertCircle,
 } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 interface Analysis {
   stateSpace: {
@@ -115,6 +115,8 @@ const difficultyColors: Record<string, string> = {
   hard: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
 };
 
+import { Save, Check } from "lucide-react";
+
 export default function Creator() {
   const [prompt, setPrompt] = useState("");
   const [generating, setGenerating] = useState(false);
@@ -125,6 +127,8 @@ export default function Creator() {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [showCode, setShowCode] = useState(false);
   const [showAnalysis, setShowAnalysis] = useState(false);
+  const [savedToLeaderboard, setSavedToLeaderboard] = useState(false);
+  const [saving, setSaving] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -217,8 +221,31 @@ export default function Creator() {
     setError(null);
     setShowCode(false);
     setShowAnalysis(false);
+    setSavedToLeaderboard(false);
     if (iframeRef.current) {
       iframeRef.current.srcdoc = "";
+    }
+  };
+
+  const saveToLeaderboard = async () => {
+    if (!code || !analysis) return;
+    setSaving(true);
+    try {
+      const firstUserMessage = chatHistory.find((m) => m.role === "user")?.content || "Custom Environment";
+      const name = firstUserMessage.length > 60 ? firstUserMessage.slice(0, 60) + "..." : firstUserMessage;
+      await apiRequest("POST", "/api/created-environments", {
+        name,
+        prompt: firstUserMessage,
+        code,
+        analysis,
+        complexityScore: analysis.complexity?.score || 5,
+      });
+      setSavedToLeaderboard(true);
+      queryClient.invalidateQueries({ queryKey: ["/api/created-environments"] });
+    } catch {
+      setError("Failed to save to leaderboard.");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -318,6 +345,24 @@ export default function Creator() {
                       <BarChart3 className="w-3.5 h-3.5 mr-1" />
                       Analysis
                     </Button>
+                    {analysis && (
+                      <Button
+                        size="sm"
+                        variant={savedToLeaderboard ? "ghost" : "outline"}
+                        onClick={saveToLeaderboard}
+                        disabled={saving || savedToLeaderboard}
+                        className="text-xs"
+                        data-testid="button-save-leaderboard"
+                      >
+                        {savedToLeaderboard ? (
+                          <><Check className="w-3.5 h-3.5 mr-1" />Saved</>
+                        ) : saving ? (
+                          <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />Saving</>
+                        ) : (
+                          <><Save className="w-3.5 h-3.5 mr-1" />Save to Leaderboard</>
+                        )}
+                      </Button>
+                    )}
                   </div>
                 </div>
               )}

@@ -1,13 +1,10 @@
 import { Link, useLocation } from "wouter";
 import { useState, useEffect } from "react";
 import {
-  Globe,
-  Layers,
-  Box,
-  BarChart3,
-  FlaskConical,
-  BookOpen,
   Wand2,
+  Eye,
+  Trophy,
+  BookOpen,
   Moon,
   Sun,
   Menu,
@@ -16,12 +13,9 @@ import {
 import { Button } from "@/components/ui/button";
 
 const navItems = [
-  { path: "/", label: "Overview", icon: Globe },
-  { path: "/environments", label: "Environments", icon: Box },
-  { path: "/models", label: "Models", icon: Layers },
-  { path: "/compare", label: "Compare", icon: BarChart3 },
-  { path: "/sandbox", label: "Sandbox", icon: FlaskConical },
-  { path: "/create", label: "Create", icon: Wand2 },
+  { path: "/", label: "Creator", icon: Wand2 },
+  { path: "/rollouts", label: "Rollouts", icon: Eye },
+  { path: "/leaderboard", label: "Leaderboard", icon: Trophy },
   { path: "/resources", label: "Resources", icon: BookOpen },
 ];
 

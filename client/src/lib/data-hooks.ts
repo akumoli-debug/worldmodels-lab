@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import type { Environment, WorldModel, BenchmarkResult, AnalysisDimension } from "@shared/schema";
+import type { Environment, WorldModel, BenchmarkResult, AnalysisDimension, CreatedEnvironment } from "@shared/schema";
 
 export function useEnvironments() {
   return useQuery<Environment[]>({
@@ -34,6 +34,19 @@ export function useBenchmarks() {
 export function useDimensions() {
   return useQuery<AnalysisDimension[]>({
     queryKey: ["/api/dimensions"],
+  });
+}
+
+export function useCreatedEnvironments() {
+  return useQuery<CreatedEnvironment[]>({
+    queryKey: ["/api/created-environments"],
+  });
+}
+
+export function useCreatedEnvironment(id: number) {
+  return useQuery<CreatedEnvironment>({
+    queryKey: ["/api/created-environments", id],
+    enabled: id > 0,
   });
 }
 

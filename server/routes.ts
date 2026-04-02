@@ -114,6 +114,119 @@ For world models research, these environments should exhibit clear, learnable dy
     }
   });
 
+  // Created Environments (for leaderboard)
+  app.get("/api/created-environments", (_req, res) => {
+    const envs = storage.getCreatedEnvironments();
+    res.json(envs);
+  });
+
+  app.get("/api/created-environments/:id", (req, res) => {
+    const env = storage.getCreatedEnvironment(Number(req.params.id));
+    if (!env) return res.status(404).json({ message: "Not found" });
+    res.json(env);
+  });
+
+  app.post("/api/created-environments", (req, res) => {
+    try {
+      const { name, prompt, code, analysis, complexityScore } = req.body;
+      if (!name || !code || !analysis) {
+        return res.status(400).json({ message: "name, code, and analysis are required" });
+      }
+      const env = storage.createCreatedEnvironment({
+        name,
+        prompt: prompt || "",
+        code,
+        analysis: typeof analysis === "string" ? analysis : JSON.stringify(analysis),
+        complexityScore: complexityScore || 1,
+        createdAt: new Date().toISOString(),
+      });
+      res.json(env);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/created-environments/:id", (req, res) => {
+    storage.deleteCreatedEnvironment(Number(req.params.id));
+    res.json({ ok: true });
+  });
+
+  // Rollout Comparison — simulate how different architectures would dream forward
+  app.post("/api/simulate-rollouts", async (req, res) => {
+    try {
+      const { code, analysis } = req.body;
+      if (!code) return res.status(400).json({ message: "Code is required" });
+
+      const client = new Anthropic();
+
+      const message = await client.messages.create({
+        model: "claude_sonnet_4_6",
+        max_tokens: 4000,
+        system: `You are a world models researcher. Given a game environment's code and analysis, simulate how different world model architectures would perform at dreaming/predicting rollouts of this environment. Focus on where each architecture's predictions would diverge from ground truth over time.
+
+Return ONLY valid JSON, no markdown fences.`,
+        messages: [{ role: "user", content: `Given this game environment, simulate rollout predictions for 4 architectures over 5 timesteps (t=1, t=5, t=10, t=25, t=50).
+
+For each architecture and timestep, describe:
+- What the model would predict (brief description)
+- A confidence score (0-100, how accurate the prediction would be)
+- Key errors or artifacts that would appear
+
+Return JSON:
+{
+  "environmentSummary": "1-2 sentence description of the key dynamics",
+  "groundTruth": [
+    { "t": 1, "description": "what actually happens at t=1" },
+    { "t": 5, "description": "..." },
+    { "t": 10, "description": "..." },
+    { "t": 25, "description": "..." },
+    { "t": 50, "description": "..." }
+  ],
+  "architectures": [
+    {
+      "name": "RSSM (DreamerV3)",
+      "rollouts": [
+        { "t": 1, "prediction": "...", "confidence": 95, "errors": "..." },
+        { "t": 5, "prediction": "...", "confidence": 85, "errors": "..." },
+        { "t": 10, "prediction": "...", "confidence": 60, "errors": "..." },
+        { "t": 25, "prediction": "...", "confidence": 30, "errors": "..." },
+        { "t": 50, "prediction": "...", "confidence": 10, "errors": "..." }
+      ],
+      "summary": "1-2 sentence overall assessment"
+    },
+    {
+      "name": "Transformer (IRIS)",
+      "rollouts": [...]
+    },
+    {
+      "name": "Diffusion (DIAMOND)",
+      "rollouts": [...]
+    },
+    {
+      "name": "MCTS + Learned (MuZero)",
+      "rollouts": [...]
+    }
+  ]
+}
+
+Be realistic about how each architecture would actually fail. RSSM tends to blur, Transformers can hallucinate novel objects, Diffusion models struggle with temporal consistency, MCTS needs accurate value functions.
+
+Code:
+${code}
+
+${analysis ? `Analysis: ${typeof analysis === "string" ? analysis : JSON.stringify(analysis)}` : ""}` }],
+      });
+
+      let text = (message.content[0] as any).text || "";
+      text = text.replace(/^```(?:json)?\n?/gm, "").replace(/```$/gm, "").trim();
+      const rollouts = JSON.parse(text);
+      res.json(rollouts);
+    } catch (error: any) {
+      console.error("Rollout simulation error:", error);
+      res.status(500).json({ message: error.message || "Failed to simulate rollouts" });
+    }
+  });
+
   // World Model Analysis — analyze generated code for world model properties
   app.post("/api/analyze-environment", async (req, res) => {
     try {

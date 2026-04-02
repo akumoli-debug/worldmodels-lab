@@ -1,7 +1,7 @@
-import { environments, worldModels, benchmarkResults, analysisDimensions } from "@shared/schema";
-import type { Environment, WorldModel, BenchmarkResult, AnalysisDimension } from "@shared/schema";
+import { environments, worldModels, benchmarkResults, analysisDimensions, createdEnvironments } from "@shared/schema";
+import type { Environment, WorldModel, BenchmarkResult, AnalysisDimension, CreatedEnvironment, InsertCreatedEnvironment } from "@shared/schema";
 import { db } from "./db";
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 
 export interface IStorage {
   // Environments
@@ -21,6 +21,12 @@ export interface IStorage {
 
   // Analysis Dimensions
   getAnalysisDimensions(): AnalysisDimension[];
+
+  // Created Environments
+  getCreatedEnvironments(): CreatedEnvironment[];
+  getCreatedEnvironment(id: number): CreatedEnvironment | undefined;
+  createCreatedEnvironment(data: InsertCreatedEnvironment): CreatedEnvironment;
+  deleteCreatedEnvironment(id: number): void;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -62,6 +68,22 @@ export class DatabaseStorage implements IStorage {
 
   getAnalysisDimensions(): AnalysisDimension[] {
     return db.select().from(analysisDimensions).all();
+  }
+
+  getCreatedEnvironments(): CreatedEnvironment[] {
+    return db.select().from(createdEnvironments).orderBy(desc(createdEnvironments.complexityScore)).all();
+  }
+
+  getCreatedEnvironment(id: number): CreatedEnvironment | undefined {
+    return db.select().from(createdEnvironments).where(eq(createdEnvironments.id, id)).get();
+  }
+
+  createCreatedEnvironment(data: InsertCreatedEnvironment): CreatedEnvironment {
+    return db.insert(createdEnvironments).values(data).returning().get();
+  }
+
+  deleteCreatedEnvironment(id: number): void {
+    db.delete(createdEnvironments).where(eq(createdEnvironments.id, id)).run();
   }
 }
 

@@ -52,10 +52,22 @@ export const analysisDimensions = sqliteTable("analysis_dimensions", {
   category: text("category").notNull(), // physical, logical, geometric, temporal
 });
 
+// User-created environments (saved from Creator, shown in Leaderboard)
+export const createdEnvironments = sqliteTable("created_environments", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  prompt: text("prompt").notNull(),
+  code: text("code").notNull(),
+  analysis: text("analysis").notNull(), // JSON stringified analysis object
+  complexityScore: integer("complexity_score").notNull(), // 1-10
+  createdAt: text("created_at").notNull(), // ISO string
+});
+
 export const insertEnvironmentSchema = createInsertSchema(environments).omit({ id: true });
 export const insertWorldModelSchema = createInsertSchema(worldModels).omit({ id: true });
 export const insertBenchmarkResultSchema = createInsertSchema(benchmarkResults).omit({ id: true });
 export const insertAnalysisDimensionSchema = createInsertSchema(analysisDimensions).omit({ id: true });
+export const insertCreatedEnvironmentSchema = createInsertSchema(createdEnvironments).omit({ id: true });
 
 export type Environment = typeof environments.$inferSelect;
 export type InsertEnvironment = z.infer<typeof insertEnvironmentSchema>;
@@ -65,3 +77,5 @@ export type BenchmarkResult = typeof benchmarkResults.$inferSelect;
 export type InsertBenchmarkResult = z.infer<typeof insertBenchmarkResultSchema>;
 export type AnalysisDimension = typeof analysisDimensions.$inferSelect;
 export type InsertAnalysisDimension = z.infer<typeof insertAnalysisDimensionSchema>;
+export type CreatedEnvironment = typeof createdEnvironments.$inferSelect;
+export type InsertCreatedEnvironment = z.infer<typeof insertCreatedEnvironmentSchema>;
