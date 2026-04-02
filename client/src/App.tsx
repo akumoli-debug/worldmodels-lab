@@ -7,7 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import Creator from "@/pages/creator";
 import RolloutViewer from "@/pages/rollout-viewer";
-import Leaderboard from "@/pages/leaderboard";
+import ArchPicker from "@/pages/arch-picker";
 import Resources from "@/pages/resources";
 import AppLayout from "@/components/app-layout";
 
@@ -17,7 +17,7 @@ function AppRouter() {
       <Switch>
         <Route path="/" component={Creator} />
         <Route path="/rollouts" component={RolloutViewer} />
-        <Route path="/leaderboard" component={Leaderboard} />
+        <Route path="/picker" component={ArchPicker} />
         <Route path="/resources" component={Resources} />
         <Route component={NotFound} />
       </Switch>

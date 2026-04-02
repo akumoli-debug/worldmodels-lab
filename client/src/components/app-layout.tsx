@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import {
   Wand2,
   Eye,
-  Trophy,
+  SlidersHorizontal,
   BookOpen,
   Moon,
   Sun,
@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 const navItems = [
   { path: "/", label: "Creator", icon: Wand2 },
   { path: "/rollouts", label: "Rollouts", icon: Eye },
-  { path: "/leaderboard", label: "Leaderboard", icon: Trophy },
+  { path: "/picker", label: "Arch Picker", icon: SlidersHorizontal },
   { path: "/resources", label: "Resources", icon: BookOpen },
 ];
 
