@@ -11,6 +11,8 @@ import EnvironmentDetail from "@/pages/environment-detail";
 import Models from "@/pages/models";
 import ModelDetail from "@/pages/model-detail";
 import Compare from "@/pages/compare";
+import Sandbox from "@/pages/sandbox";
+import Resources from "@/pages/resources";
 import AppLayout from "@/components/app-layout";
 
 function AppRouter() {
@@ -23,6 +25,8 @@ function AppRouter() {
         <Route path="/models" component={Models} />
         <Route path="/models/:slug" component={ModelDetail} />
         <Route path="/compare" component={Compare} />
+        <Route path="/sandbox" component={Sandbox} />
+        <Route path="/resources" component={Resources} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

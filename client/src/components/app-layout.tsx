@@ -5,6 +5,8 @@ import {
   Layers,
   Box,
   BarChart3,
+  FlaskConical,
+  BookOpen,
   Moon,
   Sun,
   Menu,
@@ -17,6 +19,8 @@ const navItems = [
   { path: "/environments", label: "Environments", icon: Box },
   { path: "/models", label: "Models", icon: Layers },
   { path: "/compare", label: "Compare", icon: BarChart3 },
+  { path: "/sandbox", label: "Sandbox", icon: FlaskConical },
+  { path: "/resources", label: "Resources", icon: BookOpen },
 ];
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
