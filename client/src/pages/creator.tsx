@@ -68,16 +68,32 @@ function buildGameHtml(gameCode: string): string {
   body { background: #0f1114; display: flex; align-items: center; justify-content: center; min-height: 100vh; overflow: hidden; }
   #game-container { border-radius: 8px; overflow: hidden; }
   #game-container canvas { display: block; }
+  .error-display { color: #ff6b6b; font-family: monospace; padding: 24px; max-width: 600px; }
+  .error-display h3 { margin-bottom: 12px; }
+  .error-display pre { white-space: pre-wrap; font-size: 13px; }
 </style>
 <script src="${PHASER_CDN}"><\/script>
 </head>
 <body>
 <div id="game-container"></div>
 <script>
+function showError(msg) {
+  document.body.innerHTML = '<div class="error-display"><h3>Runtime Error</h3><pre>' + msg + '</pre><p style="margin-top:16px;color:#888;font-size:12px;">Try describing the environment differently, or click New to start over.</p></div>';
+}
+
+window.onerror = function(msg) { showError(msg); };
+
 try {
   ${gameCode}
+
+  // Verify Phaser actually started — if no canvas after 3s, show error
+  setTimeout(function() {
+    if (!document.querySelector('canvas')) {
+      showError('Game failed to render. The generated code may not have created a valid Phaser scene.');
+    }
+  }, 3000);
 } catch(e) {
-  document.body.innerHTML = '<div style="color:#ff6b6b;font-family:monospace;padding:24px;max-width:600px;"><h3>Runtime Error</h3><pre style="margin-top:12px;white-space:pre-wrap;font-size:13px;">' + e.message + '</pre></div>';
+  showError(e.message);
 }
 <\/script>
 </body>
@@ -228,14 +244,14 @@ export default function Creator() {
                 <iframe
                   ref={iframeRef}
                   className="w-full bg-[#0f1114] rounded-t-lg"
-                  style={{ height: "500px" }}
-                  sandbox="allow-scripts allow-same-origin"
+                  style={{ height: "min(500px, 55vh)" }}
+                  sandbox="allow-scripts"
                   data-testid="game-iframe"
                 />
               ) : (
                 <div
                   className="w-full flex flex-col items-center justify-center gap-4 text-muted-foreground"
-                  style={{ height: "500px" }}
+                  style={{ height: "min(500px, 55vh)" }}
                 >
                   <Wand2 className="w-10 h-10 opacity-30" />
                   <div className="text-center space-y-1.5">
@@ -319,6 +335,11 @@ export default function Creator() {
             </Card>
           )}
 
+          {/* Mobile analysis panel — inline below game */}
+          <div className="lg:hidden">
+            <AnalysisPanel analysis={analysis} analyzing={analyzing} showAnalysis={showAnalysis} />
+          </div>
+
           {/* Chat input */}
           <form onSubmit={handleSubmit} className="flex items-end gap-2">
             <textarea
@@ -375,203 +396,209 @@ export default function Creator() {
           )}
         </div>
 
-        {/* Right: World Model Analysis panel */}
-        <div className="space-y-4">
-          {/* Analysis panel */}
-          {(analyzing || analysis) && showAnalysis && (
-            <>
-              {analyzing ? (
-                <Card>
-                  <CardContent className="p-4 space-y-3">
-                    <Skeleton className="h-4 w-32" />
-                    <Skeleton className="h-20 w-full" />
-                    <Skeleton className="h-20 w-full" />
-                  </CardContent>
-                </Card>
-              ) : analysis ? (
-                <>
-                  {/* State & Action Space */}
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium flex items-center gap-2">
-                        <Layers className="w-4 h-4 text-primary" />
-                        State Space
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      <div className="flex flex-wrap gap-1">
-                        {analysis.stateSpace.variables.map((v, i) => (
-                          <Badge key={i} variant="secondary" className="text-[10px] font-mono">
-                            {v}
-                          </Badge>
-                        ))}
-                      </div>
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div>
-                          <span className="text-muted-foreground">Dimensionality</span>
-                          <p className="font-mono mt-0.5">{analysis.stateSpace.dimensionality}</p>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">Observability</span>
-                          <p className="mt-0.5 capitalize">{analysis.stateSpace.observability}</p>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium flex items-center gap-2">
-                        <Target className="w-4 h-4 text-primary" />
-                        Action Space
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      <div className="flex flex-wrap gap-1">
-                        {analysis.actionSpace.actions.map((a, i) => (
-                          <Badge key={i} variant="outline" className="text-[10px]">
-                            {a}
-                          </Badge>
-                        ))}
-                      </div>
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div>
-                          <span className="text-muted-foreground">Type</span>
-                          <p className="mt-0.5 capitalize">{analysis.actionSpace.type}</p>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">Size</span>
-                          <p className="mt-0.5">{analysis.actionSpace.size}</p>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  {/* Dynamics */}
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium flex items-center gap-2">
-                        <Zap className="w-4 h-4 text-primary" />
-                        Dynamics
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      <div className="flex items-center gap-2 text-xs">
-                        <Badge variant="secondary" className="capitalize">{analysis.dynamics.type}</Badge>
-                        {analysis.dynamics.physicsBased && (
-                          <Badge variant="secondary" className="bg-blue-500/10 text-blue-600 dark:text-blue-400">
-                            Physics
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="space-y-1">
-                        <span className="text-xs text-muted-foreground">Key rules</span>
-                        {analysis.dynamics.keyRules.map((rule, i) => (
-                          <div key={i} className="flex items-start gap-1.5 text-xs">
-                            <div className="w-1 h-1 rounded-full bg-primary mt-1.5 shrink-0" />
-                            <span className="text-muted-foreground">{rule}</span>
-                          </div>
-                        ))}
-                      </div>
-                      {analysis.dynamics.nonlinearities.length > 0 && (
-                        <div className="space-y-1">
-                          <span className="text-xs text-muted-foreground">Nonlinearities</span>
-                          <div className="space-y-1">
-                            {analysis.dynamics.nonlinearities.map((n, i) => (
-                              <div key={i} className="text-[11px] text-amber-600 dark:text-amber-400 flex items-start gap-1.5">
-                                <div className="w-1 h-1 rounded-full bg-amber-500 mt-1.5 shrink-0" />
-                                <span className="leading-relaxed">{n}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  {/* Complexity */}
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium flex items-center gap-2">
-                        <BarChart3 className="w-4 h-4 text-primary" />
-                        Complexity
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="flex items-center gap-3 mb-3">
-                        <div className="flex-1">
-                          <div className="h-2 rounded-full bg-muted overflow-hidden">
-                            <div
-                              className="h-full rounded-full bg-primary transition-all"
-                              style={{ width: `${(analysis.complexity.score / 10) * 100}%` }}
-                            />
-                          </div>
-                        </div>
-                        <span className="text-sm font-semibold tabular-nums">{analysis.complexity.score}/10</span>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2 text-xs">
-                        <div>
-                          <span className="text-muted-foreground">Horizon</span>
-                          <p className="mt-0.5 capitalize">{analysis.complexity.horizon}</p>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">Multi-agent</span>
-                          <p className="mt-0.5">{analysis.complexity.multiAgent ? "Yes" : "No"}</p>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">Partial obs.</span>
-                          <p className="mt-0.5">{analysis.complexity.partialObservability ? "Yes" : "No"}</p>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  {/* Model Challenges */}
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium flex items-center gap-2">
-                        <Brain className="w-4 h-4 text-primary" />
-                        Architecture Challenges
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      {analysis.modelChallenges.map((mc, i) => (
-                        <div key={i} className="space-y-1 p-2.5 rounded-md bg-accent/30">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-medium">{mc.architecture}</span>
-                            <Badge
-                              variant="outline"
-                              className={`text-[10px] capitalize ${difficultyColors[mc.difficulty] || ""}`}
-                            >
-                              {mc.difficulty}
-                            </Badge>
-                          </div>
-                          <p className="text-[11px] text-muted-foreground leading-relaxed">{mc.reason}</p>
-                        </div>
-                      ))}
-                    </CardContent>
-                  </Card>
-                </>
-              ) : null}
-            </>
-          )}
-
-          {/* Empty state for analysis panel */}
-          {!analysis && !analyzing && (
-            <Card>
-              <CardContent className="p-6 flex flex-col items-center justify-center text-center gap-3">
-                <Brain className="w-8 h-8 text-muted-foreground/30" />
-                <div className="space-y-1">
-                  <p className="text-sm font-medium text-muted-foreground">World Model Analysis</p>
-                  <p className="text-xs text-muted-foreground/70 max-w-xs">
-                    Generate an environment to see state space, dynamics, complexity, and which architectures would struggle to learn it.
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-          )}
+        {/* Right: World Model Analysis panel — desktop only */}
+        <div className="hidden lg:block space-y-4">
+          <AnalysisPanel analysis={analysis} analyzing={analyzing} showAnalysis={showAnalysis} />
         </div>
       </div>
     </div>
+  );
+}
+
+function AnalysisPanel({ analysis, analyzing, showAnalysis }: { analysis: Analysis | null; analyzing: boolean; showAnalysis: boolean }) {
+  if ((analyzing || analysis) && showAnalysis) {
+    if (analyzing) {
+      return (
+        <Card>
+          <CardContent className="p-4 space-y-3">
+            <Skeleton className="h-4 w-32" />
+            <Skeleton className="h-20 w-full" />
+            <Skeleton className="h-20 w-full" />
+          </CardContent>
+        </Card>
+      );
+    }
+    if (analysis) {
+      return (
+        <div className="space-y-4">
+          {/* State & Action Space */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <Layers className="w-4 h-4 text-primary" />
+                State Space
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <div className="flex flex-wrap gap-1">
+                {analysis.stateSpace.variables.map((v, i) => (
+                  <Badge key={i} variant="secondary" className="text-[10px] font-mono">
+                    {v}
+                  </Badge>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <span className="text-muted-foreground">Dimensionality</span>
+                  <p className="font-mono mt-0.5">{analysis.stateSpace.dimensionality}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Observability</span>
+                  <p className="mt-0.5 capitalize">{analysis.stateSpace.observability}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <Target className="w-4 h-4 text-primary" />
+                Action Space
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <div className="flex flex-wrap gap-1">
+                {analysis.actionSpace.actions.map((a, i) => (
+                  <Badge key={i} variant="outline" className="text-[10px]">
+                    {a}
+                  </Badge>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <span className="text-muted-foreground">Type</span>
+                  <p className="mt-0.5 capitalize">{analysis.actionSpace.type}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Size</span>
+                  <p className="mt-0.5">{analysis.actionSpace.size}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Dynamics */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <Zap className="w-4 h-4 text-primary" />
+                Dynamics
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <div className="flex items-center gap-2 text-xs">
+                <Badge variant="secondary" className="capitalize">{analysis.dynamics.type}</Badge>
+                {analysis.dynamics.physicsBased && (
+                  <Badge variant="secondary" className="bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                    Physics
+                  </Badge>
+                )}
+              </div>
+              <div className="space-y-1">
+                <span className="text-xs text-muted-foreground">Key rules</span>
+                {analysis.dynamics.keyRules.map((rule, i) => (
+                  <div key={i} className="flex items-start gap-1.5 text-xs">
+                    <div className="w-1 h-1 rounded-full bg-primary mt-1.5 shrink-0" />
+                    <span className="text-muted-foreground">{rule}</span>
+                  </div>
+                ))}
+              </div>
+              {analysis.dynamics.nonlinearities.length > 0 && (
+                <div className="space-y-1">
+                  <span className="text-xs text-muted-foreground">Nonlinearities</span>
+                  <div className="space-y-1">
+                    {analysis.dynamics.nonlinearities.map((n, i) => (
+                      <div key={i} className="text-[11px] text-amber-600 dark:text-amber-400 flex items-start gap-1.5">
+                        <div className="w-1 h-1 rounded-full bg-amber-500 mt-1.5 shrink-0" />
+                        <span className="leading-relaxed">{n}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Complexity */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-primary" />
+                Complexity
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-3 mb-3">
+                <div className="flex-1">
+                  <div className="h-2 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-primary transition-all"
+                      style={{ width: `${(analysis.complexity.score / 10) * 100}%` }}
+                    />
+                  </div>
+                </div>
+                <span className="text-sm font-semibold tabular-nums">{analysis.complexity.score}/10</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div>
+                  <span className="text-muted-foreground">Horizon</span>
+                  <p className="mt-0.5 capitalize">{analysis.complexity.horizon}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Multi-agent</span>
+                  <p className="mt-0.5">{analysis.complexity.multiAgent ? "Yes" : "No"}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Partial obs.</span>
+                  <p className="mt-0.5">{analysis.complexity.partialObservability ? "Yes" : "No"}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Model Challenges */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <Brain className="w-4 h-4 text-primary" />
+                Architecture Challenges
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {analysis.modelChallenges.map((mc, i) => (
+                <div key={i} className="space-y-1 p-2.5 rounded-md bg-accent/30">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium">{mc.architecture}</span>
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] capitalize ${difficultyColors[mc.difficulty] || ""}`}
+                    >
+                      {mc.difficulty}
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">{mc.reason}</p>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </div>
+      );
+    }
+  }
+
+  // Empty state — only show on desktop
+  return (
+    <Card className="hidden lg:block">
+      <CardContent className="p-6 flex flex-col items-center justify-center text-center gap-3">
+        <Brain className="w-8 h-8 text-muted-foreground/30" />
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-muted-foreground">World Model Analysis</p>
+          <p className="text-xs text-muted-foreground/70 max-w-xs">
+            Generate an environment to see state space, dynamics, complexity, and which architectures would struggle to learn it.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

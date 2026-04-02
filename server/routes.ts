@@ -69,11 +69,14 @@ RULES:
 5. Use config.backgroundColor for the background color (dark: "#1a1a2e" or similar)
 6. Include physics (arcade or matter) when appropriate
 7. Add keyboard/mouse controls so the user can interact
-8. Use simple geometric shapes (rectangles, circles) drawn with Phaser.GameObjects.Graphics — do NOT load external image assets
+8. Use simple geometric shapes (rectangles, circles) drawn with Phaser.GameObjects.Graphics — do NOT load external image assets. For shapes that need physics, use this.add.rectangle() or this.add.circle() which return GameObjects, then apply physics with this.physics.add.existing().
 9. Add a HUD showing score, time, or relevant stats using this.add.text()
 10. Make it visually interesting with colors, particles if appropriate, and smooth movement
 11. The game should be immediately playable and demonstrate clear dynamics
 12. Add comments at the top describing: STATE_SPACE (what variables define the state), ACTION_SPACE (what the player/agent can do), DYNAMICS (what physics/rules govern transitions), REWARD_SIGNAL (what constitutes success/failure)
+13. CRITICAL: The code MUST produce visible output. Always verify your scene has a create() function that adds visible objects. If you use Matter.js physics, use this.matter.add.rectangle() / circle() which create visible bodies by default.
+14. Keep the code robust — avoid referencing undefined variables, avoid complex dependency chains that could fail silently. Simpler is better than broken.
+15. Do NOT use this.load.image() or any asset loading — everything must be drawn procedurally.
 
 For world models research, these environments should exhibit clear, learnable dynamics — physics, collision, cause-and-effect — that a world model would need to predict.`;
 
