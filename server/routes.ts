@@ -3,6 +3,7 @@ import { type Server } from "http";
 import { storage } from "./storage";
 import { seedDatabase } from "./seed";
 import Anthropic from "@anthropic-ai/sdk";
+import { analyzeCode as computeCodeAnalysis } from "./code-analysis";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -227,65 +228,77 @@ ${analysis ? `Analysis: ${typeof analysis === "string" ? analysis : JSON.stringi
     }
   });
 
-  // World Model Analysis — analyze generated code for world model properties
+  // Computed Code Analysis — real metrics, no LLM
+  app.post("/api/compute-analysis", (req, res) => {
+    try {
+      const { code } = req.body;
+      if (!code) return res.status(400).json({ message: "Code is required" });
+      const metrics = computeCodeAnalysis(code);
+      res.json(metrics);
+    } catch (error: any) {
+      console.error("Compute analysis error:", error);
+      res.status(500).json({ message: error.message || "Failed to analyze code" });
+    }
+  });
+
+  // World Model Analysis — LLM for qualitative aspects + computed metrics
   app.post("/api/analyze-environment", async (req, res) => {
     try {
       const { code } = req.body;
       if (!code) return res.status(400).json({ message: "Code is required" });
 
+      // First: compute real metrics
+      const computed = computeCodeAnalysis(code);
+
+      // Then: LLM for qualitative assessments only (dynamics rules, challenge reasoning)
       const client = new Anthropic();
 
       const message = await client.messages.create({
         model: "claude_sonnet_4_6",
         max_tokens: 2000,
-        system: `You are a world models researcher analyzing game environments. Given Phaser.js game code, produce a JSON analysis. Return ONLY valid JSON, no markdown.`,
-        messages: [{ role: "user", content: `Analyze this game environment for world model research. Return a JSON object with these fields:
+        system: `You are a world models researcher. Given game code AND its computed metrics, provide ONLY the qualitative analysis that cannot be computed. Focus on dynamics rules, nonlinearities, and architecture-specific challenges. Return ONLY valid JSON, no markdown.`,
+        messages: [{ role: "user", content: `Given this game code and its computed analysis, provide qualitative assessments.
 
+Computed metrics (already available — do NOT re-derive these):
+- State variables: ${computed.stateVariables.length} (${computed.observability.observedVars} observed, ${computed.observability.hiddenVars} hidden)
+- Action space: ${computed.actionSpace.size} ${computed.actionSpace.type} inputs (${computed.actionSpace.inputs.join(", ")})
+- Cyclomatic complexity: ${computed.updateComplexity.cyclomaticComplexity}
+- Collision handlers: ${computed.updateComplexity.collisionHandlers}
+- Observability: ${computed.observability.verdict} (${Math.round(computed.observability.observabilityRatio * 100)}%)
+- Composite complexity: ${computed.complexityProfile.compositeScore}/10
+
+Return JSON with ONLY these qualitative fields:
 {
-  "stateSpace": {
-    "variables": ["list of state variables like position, velocity, score"],
-    "dimensionality": "estimated state space dimensionality (e.g. '6D continuous + 2D discrete')",
-    "observability": "fully observable / partially observable"
-  },
-  "actionSpace": {
-    "actions": ["list of available actions"],
-    "type": "discrete / continuous / hybrid",
-    "size": "number or description"
-  },
   "dynamics": {
     "type": "deterministic / stochastic",
     "physicsBased": true/false,
-    "keyRules": ["list of 3-5 core dynamics rules"],
-    "nonlinearities": ["list of nonlinear behaviors like collisions, wrapping, thresholds"]
-  },
-  "complexity": {
-    "score": 1-10,
-    "horizon": "short / medium / long (how far ahead matters)",
-    "multiAgent": false,
-    "partialObservability": false
+    "keyRules": ["3-5 core dynamics rules described concisely"],
+    "nonlinearities": ["nonlinear behaviors: collisions, wrapping, thresholds, etc."]
   },
   "modelChallenges": [
     {
       "architecture": "RSSM (DreamerV3)",
       "difficulty": "easy/medium/hard",
-      "reason": "why this architecture would struggle or succeed"
+      "reason": "specific reason based on the computed metrics and code"
     },
     {
       "architecture": "Transformer (IRIS)",
       "difficulty": "easy/medium/hard",
-      "reason": "why"
+      "reason": "specific reason"
     },
     {
-      "architecture": "Diffusion (Diffusion Forcing)",
+      "architecture": "Diffusion (DIAMOND)",
       "difficulty": "easy/medium/hard",
-      "reason": "why"
+      "reason": "specific reason"
     },
     {
-      "architecture": "MCTS + Learned Model (MuZero)",
+      "architecture": "MCTS + Learned (MuZero)",
       "difficulty": "easy/medium/hard",
-      "reason": "why"
+      "reason": "specific reason"
     }
-  ]
+  ],
+  "horizon": "short / medium / long",
+  "multiAgent": false
 }
 
 Code:
@@ -294,8 +307,34 @@ ${code}` }],
 
       let text = (message.content[0] as any).text || "";
       text = text.replace(/^```(?:json)?\n?/gm, "").replace(/```$/gm, "").trim();
-      const analysis = JSON.parse(text);
-      res.json(analysis);
+      const qualitative = JSON.parse(text);
+
+      // Merge computed + qualitative
+      const merged = {
+        computed, // all computed metrics
+        qualitative, // LLM-derived qualitative assessments
+        // Legacy format for backward compatibility
+        stateSpace: {
+          variables: computed.stateVariables.map(v => v.name),
+          dimensionality: `${computed.stateVariables.length} variables (${computed.stateVariables.filter(v => v.type === 'position' || v.type === 'velocity').length} continuous, ${computed.stateVariables.filter(v => v.type === 'counter' || v.type === 'boolean').length} discrete)`,
+          observability: computed.observability.verdict,
+        },
+        actionSpace: {
+          actions: computed.actionSpace.inputs,
+          type: computed.actionSpace.type,
+          size: String(computed.actionSpace.size),
+        },
+        dynamics: qualitative.dynamics,
+        complexity: {
+          score: computed.complexityProfile.compositeScore,
+          horizon: qualitative.horizon || "medium",
+          multiAgent: qualitative.multiAgent || false,
+          partialObservability: computed.observability.verdict !== "fully observable",
+        },
+        modelChallenges: qualitative.modelChallenges,
+      };
+
+      res.json(merged);
     } catch (error: any) {
       console.error("Analysis error:", error);
       res.status(500).json({ message: error.message || "Failed to analyze environment" });

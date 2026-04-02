@@ -7,41 +7,37 @@ import {
   Send,
   RotateCcw,
   Sparkles,
-  Brain,
   Loader2,
   Wand2,
   AlertCircle,
   Eye,
-  ChevronRight,
-  ChevronLeft,
-  Play,
-  Pause,
+  ExternalLink,
+  ChevronDown,
+  ChevronUp,
+  Activity,
+  Layers,
+  Info,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
-
-interface RolloutStep {
-  t: number;
-  prediction: string;
-  confidence: number;
-  errors: string;
-}
-
-interface ArchitectureRollout {
-  name: string;
-  rollouts: RolloutStep[];
-  summary: string;
-}
-
-interface GroundTruthStep {
-  t: number;
-  description: string;
-}
-
-interface RolloutData {
-  environmentSummary: string;
-  groundTruth: GroundTruthStep[];
-  architectures: ArchitectureRollout[];
-}
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  ReferenceLine,
+} from "recharts";
+import {
+  getModulatedCurves,
+  estimateReliableHorizon,
+  FAILURE_CATALOG,
+  type ComplexityProfile,
+  type DegradationCurve,
+  type FailureSignature,
+} from "@/lib/empirical-data";
 
 const PHASER_CDN = "https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js";
 
@@ -89,40 +85,328 @@ const EXAMPLE_PROMPTS = [
   "A billiards table with realistic ball collisions",
 ];
 
-const archColors: Record<string, { bg: string; text: string; border: string }> = {
-  "RSSM (DreamerV3)": { bg: "bg-cyan-500/10", text: "text-cyan-600 dark:text-cyan-400", border: "border-cyan-500/30" },
-  "Transformer (IRIS)": { bg: "bg-violet-500/10", text: "text-violet-600 dark:text-violet-400", border: "border-violet-500/30" },
-  "Diffusion (DIAMOND)": { bg: "bg-rose-500/10", text: "text-rose-600 dark:text-rose-400", border: "border-rose-500/30" },
-  "MCTS + Learned (MuZero)": { bg: "bg-emerald-500/10", text: "text-emerald-600 dark:text-emerald-400", border: "border-emerald-500/30" },
+// Architecture display configs
+const ARCH_CONFIG: Record<string, {
+  color: string;
+  stroke: string;
+  bg: string;
+  text: string;
+  border: string;
+  badgeBg: string;
+}> = {
+  "DIAMOND": {
+    color: "#f43f5e",
+    stroke: "#f43f5e",
+    bg: "bg-rose-500/10",
+    text: "text-rose-500 dark:text-rose-400",
+    border: "border-rose-500/30",
+    badgeBg: "bg-rose-500/15",
+  },
+  "IRIS": {
+    color: "#8b5cf6",
+    stroke: "#8b5cf6",
+    bg: "bg-violet-500/10",
+    text: "text-violet-500 dark:text-violet-400",
+    border: "border-violet-500/30",
+    badgeBg: "bg-violet-500/15",
+  },
+  "DreamerV3": {
+    color: "#06b6d4",
+    stroke: "#06b6d4",
+    bg: "bg-cyan-500/10",
+    text: "text-cyan-500 dark:text-cyan-400",
+    border: "border-cyan-500/30",
+    badgeBg: "bg-cyan-500/15",
+  },
+  "MuZero": {
+    color: "#10b981",
+    stroke: "#10b981",
+    bg: "bg-emerald-500/10",
+    text: "text-emerald-500 dark:text-emerald-400",
+    border: "border-emerald-500/30",
+    badgeBg: "bg-emerald-500/15",
+  },
 };
 
-function getConfidenceColor(confidence: number) {
-  if (confidence >= 80) return "text-emerald-600 dark:text-emerald-400";
-  if (confidence >= 50) return "text-amber-600 dark:text-amber-400";
-  return "text-rose-600 dark:text-rose-400";
+const SEVERITY_CONFIG = {
+  mild: { bg: "bg-amber-500/10", text: "text-amber-600 dark:text-amber-400", border: "border-amber-500/20", dot: "bg-amber-400" },
+  moderate: { bg: "bg-orange-500/10", text: "text-orange-600 dark:text-orange-400", border: "border-orange-500/20", dot: "bg-orange-400" },
+  severe: { bg: "bg-rose-500/10", text: "text-rose-600 dark:text-rose-400", border: "border-rose-500/20", dot: "bg-rose-400" },
+  catastrophic: { bg: "bg-red-600/10", text: "text-red-600 dark:text-red-400", border: "border-red-600/20", dot: "bg-red-500" },
+};
+
+// Build chart data from multiple curves — merged by t-value
+function buildChartData(curves: DegradationCurve[]): Record<string, number | string>[] {
+  const tSet = new Set<number>();
+  for (const c of curves) {
+    for (const point of c.curve) tSet.add(point.t);
+  }
+  const tValues = Array.from(tSet).sort((a, b) => a - b);
+
+  return tValues.map((t) => {
+    const row: Record<string, number | string> = { t };
+    for (const c of curves) {
+      const point = c.curve.find((p) => p.t === t);
+      if (point) row[c.shortName] = point.quality;
+    }
+    return row;
+  });
 }
 
-function getConfidenceBg(confidence: number) {
-  if (confidence >= 80) return "bg-emerald-500";
-  if (confidence >= 50) return "bg-amber-500";
-  return "bg-rose-500";
+// Find which failures are active at a given step
+function getActiveFailuresAtStep(curves: DegradationCurve[], step: number): {
+  arch: string;
+  failure: DegradationCurve["failures"][number];
+}[] {
+  const active: { arch: string; failure: DegradationCurve["failures"][number] }[] = [];
+  for (const c of curves) {
+    for (const f of c.failures) {
+      if (f.onset <= step) {
+        active.push({ arch: c.shortName, failure: f });
+      }
+    }
+  }
+  return active;
+}
+
+// Custom tooltip for the Recharts chart
+function DegradationTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-popover border border-border rounded-lg shadow-lg p-3 text-xs min-w-[180px]">
+      <p className="font-mono text-muted-foreground mb-2">t = {label} steps</p>
+      {payload.map((entry: any) => {
+        const cfg = ARCH_CONFIG[entry.dataKey];
+        return (
+          <div key={entry.dataKey} className="flex items-center justify-between gap-4 mb-1">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: cfg?.color || entry.color }} />
+              <span className="text-foreground">{entry.dataKey}</span>
+            </span>
+            <span className="font-mono font-semibold" style={{ color: cfg?.color || entry.color }}>
+              {(entry.value * 100).toFixed(0)}%
+            </span>
+          </div>
+        );
+      })}
+      <p className="text-[10px] text-muted-foreground/60 mt-2 border-t border-border pt-1.5">
+        Quality = modulated empirical SSIM
+      </p>
+    </div>
+  );
+}
+
+// Failure timeline component
+function FailureTimeline({ curves, selectedStep, onStepClick }: {
+  curves: DegradationCurve[];
+  selectedStep: number | null;
+  onStepClick: (step: number) => void;
+}) {
+  const MAX_STEP = 1000;
+  const DISPLAY_MAX = 200; // show up to 200 on timeline for readability
+
+  return (
+    <div className="space-y-2">
+      {curves.map((curve) => {
+        const cfg = ARCH_CONFIG[curve.shortName];
+        return (
+          <div key={curve.shortName} className="flex items-start gap-3">
+            <span className={`text-[11px] font-medium w-24 shrink-0 pt-0.5 ${cfg?.text}`}>
+              {curve.shortName}
+            </span>
+            <div className="relative flex-1 h-6">
+              {/* Track */}
+              <div className="absolute inset-y-[10px] inset-x-0 h-[2px] rounded-full bg-border" />
+              {/* Failure markers */}
+              {curve.failures.map((f, i) => {
+                const pct = Math.min(f.onset / DISPLAY_MAX, 1) * 100;
+                const sevCfg = SEVERITY_CONFIG[f.severity as keyof typeof SEVERITY_CONFIG] || SEVERITY_CONFIG.moderate;
+                return (
+                  <button
+                    key={i}
+                    title={`t=${f.onset}: ${f.description}`}
+                    onClick={() => onStepClick(f.onset)}
+                    className="absolute top-0 -translate-x-1/2 group"
+                    style={{ left: `${pct}%` }}
+                    data-testid={`failure-marker-${curve.shortName}-${i}`}
+                  >
+                    <div className={`w-3 h-3 rounded-full border-2 transition-transform group-hover:scale-125 ${sevCfg.dot} border-background`} />
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-20">
+                      <div className="bg-popover border border-border rounded-md shadow-lg p-2 text-[10px] w-48 whitespace-normal text-left">
+                        <p className="font-mono text-muted-foreground mb-1">onset t≈{f.onset}</p>
+                        <p className="text-foreground leading-relaxed">{f.description}</p>
+                        <span className={`inline-block mt-1 px-1.5 py-0.5 rounded-sm text-[9px] font-medium ${sevCfg.bg} ${sevCfg.text}`}>
+                          {f.severity}
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+              {/* Selected step cursor */}
+              {selectedStep !== null && (
+                <div
+                  className="absolute top-0 bottom-0 -translate-x-1/2 w-[2px] bg-primary/70 rounded-full"
+                  style={{ left: `${Math.min(selectedStep / DISPLAY_MAX, 1) * 100}%` }}
+                />
+              )}
+              {/* Step labels */}
+              <div className="absolute -bottom-4 left-0 text-[9px] text-muted-foreground/50 font-mono">0</div>
+              <div className="absolute -bottom-4 right-0 text-[9px] text-muted-foreground/50 font-mono">200+</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Reliable horizon bar chart
+function HorizonSummary({ horizons, curves }: { horizons: Record<string, number>; curves: DegradationCurve[] }) {
+  const maxHorizon = Math.max(...Object.values(horizons), 1);
+
+  return (
+    <div className="space-y-2">
+      {Object.entries(horizons).map(([arch, horizon]) => {
+        const cfg = ARCH_CONFIG[arch];
+        const curve = curves.find((c) => c.shortName === arch);
+        const pct = (horizon / Math.max(maxHorizon, 200)) * 100;
+        return (
+          <div key={arch} className="flex items-center gap-3">
+            <span className={`text-[11px] font-medium w-24 shrink-0 ${cfg?.text}`}>{arch}</span>
+            <div className="flex-1 h-5 bg-muted rounded-sm overflow-hidden relative">
+              <div
+                className="h-full rounded-sm transition-all duration-700"
+                style={{ width: `${pct}%`, backgroundColor: cfg?.color }}
+              />
+            </div>
+            <span className="text-[11px] font-mono text-muted-foreground w-16 text-right">
+              {horizon} steps
+            </span>
+            {curve && (
+              <a
+                href={curve.sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 text-muted-foreground/50 hover:text-primary transition-colors"
+                title={curve.source}
+                data-testid={`source-link-${arch}`}
+              >
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            )}
+          </div>
+        );
+      })}
+      <p className="text-[10px] text-muted-foreground/60 pt-1">
+        Reliable horizon = last step where predicted quality ≥ 0.5. Modulated by environment complexity.
+      </p>
+    </div>
+  );
+}
+
+// Active failure signatures panel
+function ActiveFailures({ curves, step }: { curves: DegradationCurve[]; step: number }) {
+  const activeFailures = getActiveFailuresAtStep(curves, step);
+
+  if (activeFailures.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground/60 italic">
+        No failure signatures active at t={step}. Quality predictions are within reliable range.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {activeFailures.map(({ arch, failure }, i) => {
+        const cfg = ARCH_CONFIG[arch];
+        const sevCfg = SEVERITY_CONFIG[failure.severity as keyof typeof SEVERITY_CONFIG] || SEVERITY_CONFIG.moderate;
+        // Find matching catalog entry for source citation
+        const catalogEntry = FAILURE_CATALOG.find(
+          (e) =>
+            e.description.toLowerCase().includes(failure.description.toLowerCase().slice(0, 30))
+        );
+        return (
+          <div key={i} className={`rounded-md p-2.5 border ${sevCfg.bg} ${sevCfg.border}`}>
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <span className={`text-[11px] font-semibold ${cfg?.text}`}>{arch}</span>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-sm font-medium ${sevCfg.bg} ${sevCfg.text}`}>
+                {failure.severity} · onset t≈{failure.onset}
+              </span>
+            </div>
+            <p className="text-[11px] text-foreground leading-relaxed">{failure.description}</p>
+            {catalogEntry && (
+              <a
+                href={catalogEntry.sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`inline-flex items-center gap-1 mt-1.5 text-[10px] ${sevCfg.text} hover:underline opacity-80`}
+              >
+                <ExternalLink className="w-2.5 h-2.5" />
+                {catalogEntry.source}
+              </a>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Source citations panel
+function SourceCitations({ curves }: { curves: DegradationCurve[] }) {
+  const allSources: { name: string; url: string; arch: string }[] = [];
+  const seen = new Set<string>();
+
+  for (const c of curves) {
+    if (!seen.has(c.sourceUrl)) {
+      allSources.push({ name: c.source, url: c.sourceUrl, arch: c.shortName });
+      seen.add(c.sourceUrl);
+    }
+  }
+
+  // Add FAILURE_CATALOG sources
+  for (const f of FAILURE_CATALOG) {
+    if (!seen.has(f.sourceUrl)) {
+      allSources.push({ name: f.source, url: f.sourceUrl, arch: f.architecture });
+      seen.add(f.sourceUrl);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {allSources.map((s, i) => (
+        <a
+          key={i}
+          href={s.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full border border-border bg-muted/50 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+          data-testid={`citation-${i}`}
+        >
+          <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+          {s.name}
+        </a>
+      ))}
+    </div>
+  );
 }
 
 export default function RolloutViewer() {
   const [prompt, setPrompt] = useState("");
   const [generating, setGenerating] = useState(false);
-  const [simulating, setSimulating] = useState(false);
+  const [computing, setComputing] = useState(false);
   const [code, setCode] = useState<string | null>(null);
-  const [analysis, setAnalysis] = useState<any>(null);
-  const [rolloutData, setRolloutData] = useState<RolloutData | null>(null);
+  const [complexityProfile, setComplexityProfile] = useState<ComplexityProfile | null>(null);
+  const [curves, setCurves] = useState<DegradationCurve[] | null>(null);
+  const [horizons, setHorizons] = useState<Record<string, number> | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [currentStep, setCurrentStep] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [selectedStep, setSelectedStep] = useState<number | null>(null);
+  const [chartClickStep, setChartClickStep] = useState<number | null>(null);
+  const [showFailureDetail, setShowFailureDetail] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const playIntervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  const timesteps = [1, 5, 10, 25, 50];
 
   useEffect(() => {
     if (code && iframeRef.current) {
@@ -130,59 +414,54 @@ export default function RolloutViewer() {
     }
   }, [code]);
 
-  // Auto-play through timesteps
+  // When new curves arrive, reset chart state
   useEffect(() => {
-    if (isPlaying && rolloutData) {
-      playIntervalRef.current = setInterval(() => {
-        setCurrentStep((prev) => {
-          if (prev >= timesteps.length - 1) {
-            setIsPlaying(false);
-            return prev;
-          }
-          return prev + 1;
-        });
-      }, 2500);
+    if (curves) {
+      setSelectedStep(null);
+      setChartClickStep(null);
+      setShowFailureDetail(false);
     }
-    return () => {
-      if (playIntervalRef.current) clearInterval(playIntervalRef.current);
-    };
-  }, [isPlaying, rolloutData]);
+  }, [curves]);
 
   const generate = async (userPrompt: string) => {
     if (!userPrompt.trim()) return;
     setError(null);
     setGenerating(true);
-    setRolloutData(null);
-    setCurrentStep(0);
-    setIsPlaying(false);
+    setCurves(null);
+    setHorizons(null);
+    setComplexityProfile(null);
+    setSelectedStep(null);
+    setChartClickStep(null);
 
     try {
-      // Step 1: Generate the environment
+      // Step 1: Generate Phaser environment
       const genResponse = await apiRequest("POST", "/api/generate-environment", { prompt: userPrompt });
       const genData = await genResponse.json();
 
       if (genData.code) {
         setCode(genData.code);
+        setGenerating(false);
+        setComputing(true);
 
-        // Step 2: Analyze it
-        const analyzeResponse = await apiRequest("POST", "/api/analyze-environment", { code: genData.code });
-        const analysisData = await analyzeResponse.json();
-        setAnalysis(analysisData);
+        // Step 2: Compute real analysis (no LLM rollout simulation)
+        const analysisResponse = await apiRequest("POST", "/api/compute-analysis", { code: genData.code, prompt: userPrompt });
+        const analysisData = await analysisResponse.json();
 
-        // Step 3: Simulate rollouts
-        setSimulating(true);
-        const rolloutResponse = await apiRequest("POST", "/api/simulate-rollouts", {
-          code: genData.code,
-          analysis: analysisData,
-        });
-        const rollouts = await rolloutResponse.json();
-        setRolloutData(rollouts);
+        const profile: ComplexityProfile = analysisData.complexityProfile;
+        setComplexityProfile(profile);
+
+        // Step 3: Compute modulated degradation curves from empirical data
+        const modulatedCurves = getModulatedCurves(profile);
+        setCurves(modulatedCurves);
+
+        const reliableHorizons = estimateReliableHorizon(profile);
+        setHorizons(reliableHorizons);
       }
     } catch (err: any) {
       setError(err?.message || "Failed to generate. Try again.");
     } finally {
       setGenerating(false);
-      setSimulating(false);
+      setComputing(false);
     }
   };
 
@@ -202,15 +481,37 @@ export default function RolloutViewer() {
 
   const resetAll = () => {
     setCode(null);
-    setAnalysis(null);
-    setRolloutData(null);
+    setCurves(null);
+    setHorizons(null);
+    setComplexityProfile(null);
     setError(null);
-    setCurrentStep(0);
-    setIsPlaying(false);
+    setSelectedStep(null);
+    setChartClickStep(null);
     if (iframeRef.current) iframeRef.current.srcdoc = "";
   };
 
-  const isLoading = generating || simulating;
+  const handleChartMouseMove = (data: any) => {
+    if (data?.activeLabel !== undefined) {
+      setSelectedStep(Number(data.activeLabel));
+    }
+  };
+
+  const handleChartMouseLeave = () => {
+    setSelectedStep(chartClickStep);
+  };
+
+  const handleChartClick = (data: any) => {
+    if (data?.activeLabel !== undefined) {
+      const step = Number(data.activeLabel);
+      setChartClickStep(step);
+      setSelectedStep(step);
+      setShowFailureDetail(true);
+    }
+  };
+
+  const isLoading = generating || computing;
+  const chartData = curves ? buildChartData(curves) : null;
+  const displayStep = selectedStep ?? chartClickStep;
 
   return (
     <div className="space-y-4">
@@ -219,8 +520,9 @@ export default function RolloutViewer() {
           Rollout Viewer
         </h1>
         <p className="text-sm text-muted-foreground max-w-2xl">
-          Generate an environment, then see how RSSM, Transformer, Diffusion, and MCTS architectures
-          would dream it forward — where predictions diverge from reality and errors compound.
+          Generate a Phaser environment, then explore empirical degradation curves showing how DIAMOND,
+          IRIS, DreamerV3, and MuZero world models degrade over rollout steps — derived from published
+          research, not LLM estimates.
         </p>
       </div>
 
@@ -231,7 +533,7 @@ export default function RolloutViewer() {
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Describe an environment to compare rollouts..."
+          placeholder="Describe an environment to analyze..."
           className="flex-1 min-h-[48px] max-h-32 resize-none rounded-lg border border-border bg-card px-4 py-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-shadow"
           rows={1}
           data-testid="input-prompt"
@@ -247,7 +549,7 @@ export default function RolloutViewer() {
         </Button>
       </form>
 
-      {/* Example prompts when empty */}
+      {/* Example prompts */}
       {!code && !isLoading && (
         <div className="flex flex-wrap gap-1.5">
           {EXAMPLE_PROMPTS.map((ex, i) => (
@@ -270,7 +572,7 @@ export default function RolloutViewer() {
         </div>
       )}
 
-      {/* Loading states */}
+      {/* Loading: generating environment */}
       {generating && !code && (
         <Card>
           <CardContent className="p-8 flex flex-col items-center gap-3">
@@ -280,30 +582,40 @@ export default function RolloutViewer() {
         </Card>
       )}
 
-      {simulating && (
+      {/* Loading: computing analysis */}
+      {computing && (
         <Card>
-          <CardContent className="p-8 flex flex-col items-center gap-3">
+          <CardContent className="p-6 flex flex-col items-center gap-3">
             <Loader2 className="w-6 h-6 animate-spin text-primary" />
-            <p className="text-sm text-muted-foreground">Simulating rollouts across 4 architectures...</p>
-            <p className="text-xs text-muted-foreground/70">Analyzing how each world model would dream this environment forward</p>
+            <p className="text-sm text-muted-foreground">Computing complexity profile...</p>
+            <p className="text-xs text-muted-foreground/70 text-center max-w-sm">
+              Analyzing state space, action space, transition dynamics, and observability — then
+              applying published degradation curves from empirical research.
+            </p>
           </CardContent>
         </Card>
       )}
 
-      {/* Main content: game preview + rollout comparison */}
+      {/* Main content */}
       {code && (
         <div className="space-y-4">
-          {/* Top: game preview with controls */}
+          {/* Row 1: Game preview + complexity profile */}
           <div className="grid lg:grid-cols-2 gap-4">
+            {/* Game preview */}
             <Card className="overflow-hidden">
               <CardHeader className="py-2 px-4">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-medium flex items-center gap-2">
                     <Eye className="w-4 h-4 text-primary" />
-                    Ground Truth
+                    Ground Truth Environment
                   </CardTitle>
                   <div className="flex items-center gap-2">
-                    <Button size="sm" variant="outline" onClick={() => { if (iframeRef.current && code) iframeRef.current.srcdoc = buildGameHtml(code); }} data-testid="button-restart">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => { if (iframeRef.current && code) iframeRef.current.srcdoc = buildGameHtml(code); }}
+                      data-testid="button-restart"
+                    >
                       <RotateCcw className="w-3.5 h-3.5 mr-1" />
                       Restart
                     </Button>
@@ -318,192 +630,272 @@ export default function RolloutViewer() {
                 <iframe
                   ref={iframeRef}
                   className="w-full bg-[#0f1114]"
-                  style={{ height: "min(400px, 45vh)" }}
+                  style={{ height: "min(380px, 42vh)" }}
                   sandbox="allow-scripts"
                   data-testid="game-iframe"
                 />
               </CardContent>
             </Card>
 
-            {/* Summary card */}
-            {rolloutData && (
+            {/* Complexity profile */}
+            {complexityProfile ? (
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-medium flex items-center gap-2">
-                    <Brain className="w-4 h-4 text-primary" />
-                    Environment Analysis
+                    <Layers className="w-4 h-4 text-primary" />
+                    Complexity Profile
+                    <Badge variant="outline" className="ml-auto text-[10px] font-mono">
+                      composite {complexityProfile.compositeScore.toFixed(1)}/10
+                    </Badge>
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-3">
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    {rolloutData.environmentSummary}
+                <CardContent className="space-y-2.5">
+                  {[
+                    { label: "State Space", value: complexityProfile.stateSpaceDim, help: "Dimensionality of observable state" },
+                    { label: "Action Space", value: complexityProfile.actionSpaceDim, help: "Normalized action space size" },
+                    { label: "Transition Complexity", value: complexityProfile.transitionComplexity, help: "Non-linearity of dynamics" },
+                    { label: "Observability Gap", value: complexityProfile.observabilityGap, help: "Fraction of state hidden from agent" },
+                    { label: "Visual Density", value: complexityProfile.visualDensity, help: "Object count / scene complexity" },
+                  ].map(({ label, value, help }) => (
+                    <div key={label}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[11px] text-muted-foreground" title={help}>{label}</span>
+                        <span className="text-[11px] font-mono tabular-nums">{(value * 100).toFixed(0)}%</span>
+                      </div>
+                      <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-700"
+                          style={{
+                            width: `${value * 100}%`,
+                            backgroundColor: value > 0.7 ? "#f43f5e" : value > 0.4 ? "#f59e0b" : "#10b981",
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                  <p className="text-[10px] text-muted-foreground/60 pt-1">
+                    Higher complexity accelerates degradation across all architectures. Curves below are modulated accordingly.
                   </p>
-                  <div className="space-y-2">
-                    <span className="text-xs font-medium">Architecture Summaries</span>
-                    {rolloutData.architectures.map((arch) => {
-                      const colors = archColors[arch.name] || { bg: "bg-muted", text: "text-foreground", border: "border-border" };
-                      return (
-                        <div key={arch.name} className={`p-2.5 rounded-md ${colors.bg} border ${colors.border}`}>
-                          <span className={`text-xs font-medium ${colors.text}`}>{arch.name}</span>
-                          <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">{arch.summary}</p>
-                        </div>
-                      );
-                    })}
-                  </div>
                 </CardContent>
               </Card>
-            )}
+            ) : computing ? (
+              <Card>
+                <CardContent className="p-4 space-y-3">
+                  <Skeleton className="h-4 w-3/4" />
+                  <Skeleton className="h-2 w-full" />
+                  <Skeleton className="h-2 w-full" />
+                  <Skeleton className="h-2 w-full" />
+                  <Skeleton className="h-2 w-full" />
+                  <Skeleton className="h-2 w-full" />
+                </CardContent>
+              </Card>
+            ) : null}
           </div>
 
-          {/* Rollout timeline */}
-          {rolloutData && (
-            <div className="space-y-3">
-              {/* Timeline controls */}
-              <div className="flex items-center gap-3">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setIsPlaying(!isPlaying)}
-                  className="gap-1.5"
-                  data-testid="button-play-pause"
-                >
-                  {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                  {isPlaying ? "Pause" : "Play"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
-                  disabled={currentStep === 0}
-                  data-testid="button-prev-step"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </Button>
-
-                {/* Step indicators */}
-                <div className="flex items-center gap-1 flex-1">
-                  {timesteps.map((t, i) => (
-                    <button
-                      key={t}
-                      onClick={() => { setCurrentStep(i); setIsPlaying(false); }}
-                      className={`flex-1 h-8 rounded-md text-xs font-mono transition-all flex items-center justify-center ${
-                        i === currentStep
-                          ? "bg-primary text-primary-foreground font-medium"
-                          : i < currentStep
-                          ? "bg-primary/20 text-primary"
-                          : "bg-accent text-muted-foreground hover:bg-accent/80"
-                      }`}
-                      data-testid={`step-${t}`}
+          {/* Row 2: Degradation curves chart — centerpiece */}
+          {curves && chartData && (
+            <Card>
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-primary" />
+                    Quality Degradation Over Rollout Steps
+                  </CardTitle>
+                  <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                    <Info className="w-3 h-3" />
+                    Click chart to inspect failures at that step
+                  </div>
+                </div>
+                {/* Architecture legend */}
+                <div className="flex flex-wrap gap-3 pt-1">
+                  {curves.map((c) => {
+                    const cfg = ARCH_CONFIG[c.shortName];
+                    return (
+                      <a
+                        key={c.shortName}
+                        href={c.sourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
+                        title={`Source: ${c.source}`}
+                        data-testid={`legend-${c.shortName}`}
+                      >
+                        <span className="w-4 h-0.5 rounded-full inline-block" style={{ backgroundColor: cfg?.color }} />
+                        <span className={`text-[11px] font-medium ${cfg?.text}`}>{c.shortName}</span>
+                        <ExternalLink className="w-2.5 h-2.5 text-muted-foreground/40" />
+                      </a>
+                    );
+                  })}
+                </div>
+              </CardHeader>
+              <CardContent className="pb-4">
+                <div style={{ height: 320 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart
+                      data={chartData}
+                      margin={{ top: 8, right: 16, left: -8, bottom: 0 }}
+                      onMouseMove={handleChartMouseMove}
+                      onMouseLeave={handleChartMouseLeave}
+                      onClick={handleChartClick}
+                      style={{ cursor: "crosshair" }}
                     >
-                      t={t}
-                    </button>
-                  ))}
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.4} />
+                      <XAxis
+                        dataKey="t"
+                        scale="log"
+                        domain={[1, 1000]}
+                        type="number"
+                        tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                        tickLine={false}
+                        axisLine={false}
+                        label={{ value: "Rollout Steps (log scale)", position: "insideBottom", offset: -2, fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                        ticks={[1, 5, 10, 25, 50, 100, 200, 500, 1000]}
+                      />
+                      <YAxis
+                        domain={[0, 1]}
+                        tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={(v) => `${(v * 100).toFixed(0)}%`}
+                        label={{ value: "Quality", angle: -90, position: "insideLeft", offset: 16, fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                      />
+                      <Tooltip content={<DegradationTooltip />} />
+                      {/* Reliable horizon threshold line */}
+                      <ReferenceLine
+                        y={0.5}
+                        stroke="hsl(var(--muted-foreground))"
+                        strokeDasharray="4 4"
+                        strokeOpacity={0.5}
+                        label={{ value: "Reliable horizon", position: "right", fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                      />
+                      {/* Selected step cursor */}
+                      {displayStep !== null && (
+                        <ReferenceLine
+                          x={displayStep}
+                          stroke="hsl(var(--primary))"
+                          strokeOpacity={0.7}
+                          strokeWidth={1.5}
+                        />
+                      )}
+                      {curves.map((c) => (
+                        <Line
+                          key={c.shortName}
+                          type="monotone"
+                          dataKey={c.shortName}
+                          stroke={ARCH_CONFIG[c.shortName]?.color}
+                          strokeWidth={2}
+                          dot={{ r: 3, fill: ARCH_CONFIG[c.shortName]?.color, strokeWidth: 0 }}
+                          activeDot={{ r: 5, strokeWidth: 2, stroke: "hsl(var(--background))" }}
+                          connectNulls
+                        />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
 
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setCurrentStep(Math.min(timesteps.length - 1, currentStep + 1))}
-                  disabled={currentStep === timesteps.length - 1}
-                  data-testid="button-next-step"
+                {/* Methodology note */}
+                <p className="text-[10px] text-muted-foreground/50 mt-2">
+                  Base curves from published SSIM / dynamics-accuracy measurements. Modulated by this environment's complexity profile (composite score {complexityProfile?.compositeScore.toFixed(1)}/10).
+                  Sources: {curves.map((c) => (
+                    <a key={c.shortName} href={c.sourceUrl} target="_blank" rel="noopener noreferrer" className="hover:underline text-muted-foreground/70">
+                      {c.source}
+                    </a>
+                  )).reduce<(JSX.Element | string)[]>((acc, el, i) => i === 0 ? [el] : [...acc, " · ", el], [])}
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Row 3: Failure Timeline */}
+          {curves && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Failure Timeline</CardTitle>
+                <p className="text-[11px] text-muted-foreground">
+                  Dot position = empirical onset step. Hover for details, click to jump to that step.
+                </p>
+              </CardHeader>
+              <CardContent className="pt-2 pb-6">
+                <FailureTimeline
+                  curves={curves}
+                  selectedStep={displayStep}
+                  onStepClick={(step) => {
+                    setChartClickStep(step);
+                    setSelectedStep(step);
+                    setShowFailureDetail(true);
+                  }}
+                />
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Row 4: Reliable Horizon Summary */}
+          {curves && horizons && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Reliable Horizon Summary</CardTitle>
+                <p className="text-[11px] text-muted-foreground">
+                  Max rollout steps before predicted quality drops below 50%. Click source links for published evidence.
+                </p>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <HorizonSummary horizons={horizons} curves={curves} />
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Row 5: Failure Signature Detail (on click) */}
+          {curves && (
+            <Card className={chartClickStep !== null ? "border-primary/30" : ""}>
+              <CardHeader className="pb-2">
+                <button
+                  className="flex items-center justify-between w-full text-left"
+                  onClick={() => setShowFailureDetail((v) => !v)}
+                  data-testid="button-toggle-failures"
                 >
-                  <ChevronRight className="w-4 h-4" />
-                </Button>
-              </div>
-
-              {/* Ground truth for this step */}
-              <Card className="border-primary/30 bg-primary/5">
-                <CardContent className="p-3 flex items-start gap-2">
-                  <Eye className="w-4 h-4 text-primary mt-0.5 shrink-0" />
-                  <div>
-                    <span className="text-xs font-medium text-primary">Ground Truth at t={timesteps[currentStep]}</span>
-                    <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
-                      {rolloutData.groundTruth[currentStep]?.description}
+                  <CardTitle className="text-sm font-medium">
+                    Failure Signatures
+                    {chartClickStep !== null && (
+                      <span className="ml-2 text-xs font-mono text-primary">@ t={chartClickStep}</span>
+                    )}
+                  </CardTitle>
+                  <div className="flex items-center gap-1 text-muted-foreground">
+                    <span className="text-[10px]">
+                      {chartClickStep !== null
+                        ? `${getActiveFailuresAtStep(curves, chartClickStep).length} active`
+                        : "click chart to select step"}
+                    </span>
+                    {showFailureDetail ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </div>
+                </button>
+              </CardHeader>
+              {showFailureDetail && (
+                <CardContent className="pt-0">
+                  {chartClickStep !== null ? (
+                    <ActiveFailures curves={curves} step={chartClickStep} />
+                  ) : (
+                    <p className="text-xs text-muted-foreground/60 italic">
+                      Click a step on the degradation chart to inspect which failure signatures are active at that point.
                     </p>
-                  </div>
+                  )}
                 </CardContent>
-              </Card>
+              )}
+            </Card>
+          )}
 
-              {/* Architecture predictions grid */}
-              <div className="grid md:grid-cols-2 gap-3">
-                {rolloutData.architectures.map((arch) => {
-                  const step = arch.rollouts[currentStep];
-                  const colors = archColors[arch.name] || { bg: "bg-muted", text: "text-foreground", border: "border-border" };
-                  if (!step) return null;
-                  return (
-                    <Card key={arch.name} className={`border ${colors.border} transition-all`}>
-                      <CardContent className="p-3 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className={`text-xs font-medium ${colors.text}`}>{arch.name}</span>
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
-                              <div
-                                className={`h-full rounded-full transition-all duration-500 ${getConfidenceBg(step.confidence)}`}
-                                style={{ width: `${step.confidence}%` }}
-                              />
-                            </div>
-                            <span className={`text-[10px] font-mono font-semibold tabular-nums ${getConfidenceColor(step.confidence)}`}>
-                              {step.confidence}%
-                            </span>
-                          </div>
-                        </div>
-                        <div className="space-y-1">
-                          <p className="text-xs text-foreground leading-relaxed">{step.prediction}</p>
-                          {step.errors && step.errors !== "None" && step.errors !== "none" && (
-                            <div className="flex items-start gap-1.5 text-[11px] text-rose-600 dark:text-rose-400">
-                              <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
-                              <span className="leading-relaxed">{step.errors}</span>
-                            </div>
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
-
-              {/* Confidence over time chart (text-based) */}
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Confidence Decay Over Time</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    {rolloutData.architectures.map((arch) => {
-                      const colors = archColors[arch.name] || { bg: "bg-muted", text: "text-foreground", border: "border-border" };
-                      return (
-                        <div key={arch.name} className="space-y-1">
-                          <span className={`text-[11px] font-medium ${colors.text}`}>{arch.name}</span>
-                          <div className="flex items-center gap-1">
-                            {arch.rollouts.map((step, i) => (
-                              <div
-                                key={i}
-                                className={`flex-1 h-6 rounded flex items-center justify-center text-[10px] font-mono transition-all ${
-                                  i === currentStep ? "ring-1 ring-foreground/50" : ""
-                                }`}
-                                style={{
-                                  backgroundColor: `hsl(${step.confidence > 70 ? 142 : step.confidence > 40 ? 38 : 0} ${Math.min(80, step.confidence)}% ${step.confidence > 70 ? 90 : step.confidence > 40 ? 90 : 93}%)`,
-                                  color: `hsl(${step.confidence > 70 ? 142 : step.confidence > 40 ? 38 : 0} 70% ${step.confidence > 70 ? 30 : step.confidence > 40 ? 30 : 40}%)`,
-                                }}
-                              >
-                                {step.confidence}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })}
-                    <div className="flex items-center gap-1 mt-1">
-                      {timesteps.map((t) => (
-                        <div key={t} className="flex-1 text-center text-[10px] text-muted-foreground font-mono">
-                          t={t}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+          {/* Row 6: Source Citations */}
+          {curves && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Published Sources</CardTitle>
+                <p className="text-[11px] text-muted-foreground">
+                  All degradation curves, failure signatures, and horizon estimates are derived from these papers.
+                </p>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <SourceCitations curves={curves} />
+              </CardContent>
+            </Card>
           )}
         </div>
       )}
@@ -514,12 +906,35 @@ export default function RolloutViewer() {
           <CardContent className="p-12 flex flex-col items-center gap-4 text-center">
             <Wand2 className="w-10 h-10 text-muted-foreground/30" />
             <div className="space-y-1.5 max-w-md">
-              <p className="text-sm font-medium text-muted-foreground">Rollout Comparison Viewer</p>
-              <p className="text-xs text-muted-foreground/70">
-                Describe an environment above. The system will generate it, then simulate how
-                four different world model architectures would predict its future states — showing
-                where and why each one fails as predictions extend further into the future.
+              <p className="text-sm font-medium text-muted-foreground">Empirical Rollout Analysis</p>
+              <p className="text-xs text-muted-foreground/70 leading-relaxed">
+                Describe an environment above. The system will generate it as a playable Phaser game,
+                compute its complexity profile, then show you how DIAMOND, IRIS, DreamerV3, and MuZero
+                degrade over rollout steps — using published degradation curves, not LLM estimates.
               </p>
+            </div>
+            <div className="flex flex-wrap justify-center gap-2 mt-2">
+              {[
+                { arch: "DIAMOND", note: "NeurIPS 2024", url: "https://arxiv.org/abs/2405.12399" },
+                { arch: "IRIS", note: "ICLR 2023", url: "https://arxiv.org/abs/2209.00588" },
+                { arch: "DreamerV3", note: "Nature 2025", url: "https://www.nature.com/articles/s41586-025-08744-2" },
+                { arch: "MuZero", note: "Nature 2020", url: "https://arxiv.org/abs/1911.08265" },
+              ].map(({ arch, note, url }) => {
+                const cfg = ARCH_CONFIG[arch];
+                return (
+                  <a
+                    key={arch}
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`inline-flex items-center gap-1.5 text-[10px] px-2.5 py-1.5 rounded-full border ${cfg?.border} ${cfg?.badgeBg} ${cfg?.text} hover:opacity-80 transition-opacity`}
+                  >
+                    <span className="font-medium">{arch}</span>
+                    <span className="opacity-60">{note}</span>
+                    <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                  </a>
+                );
+              })}
             </div>
           </CardContent>
         </Card>
