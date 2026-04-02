@@ -7,6 +7,7 @@ import {
   BarChart3,
   FlaskConical,
   BookOpen,
+  Wand2,
   Moon,
   Sun,
   Menu,
@@ -20,6 +21,7 @@ const navItems = [
   { path: "/models", label: "Models", icon: Layers },
   { path: "/compare", label: "Compare", icon: BarChart3 },
   { path: "/sandbox", label: "Sandbox", icon: FlaskConical },
+  { path: "/create", label: "Create", icon: Wand2 },
   { path: "/resources", label: "Resources", icon: BookOpen },
 ];
 
