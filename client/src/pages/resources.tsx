@@ -39,7 +39,7 @@ import {
   Legend,
 } from "recharts";
 
-type TopTab = "papers" | "code" | "courses" | "community" | "environments" | "models" | "benchmarks";
+type TopTab = "grounding" | "papers" | "code" | "courses" | "community" | "environments" | "models" | "benchmarks";
 
 // ─── Static data ──────────────────────────────────────────
 
@@ -118,7 +118,7 @@ const tagColors: Record<string, string> = {
 // ─── Component ──────────────────────────────────────────
 
 export default function Resources() {
-  const [tab, setTab] = useState<TopTab>("papers");
+  const [tab, setTab] = useState<TopTab>("grounding");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const toggleExpand = (key: string) => {
@@ -143,6 +143,7 @@ export default function Resources() {
       {/* Tabs */}
       <div className="flex flex-wrap gap-2">
         {[
+          { key: "grounding" as TopTab, label: "Research Basis", icon: BookOpen },
           { key: "papers" as TopTab, label: "Papers", icon: FileText },
           { key: "code" as TopTab, label: "Code", icon: Github },
           { key: "courses" as TopTab, label: "Courses", icon: GraduationCap },
@@ -166,6 +167,9 @@ export default function Resources() {
           </button>
         ))}
       </div>
+
+      {/* Research Grounding */}
+      {tab === "grounding" && <ResearchGrounding />}
 
       {/* Papers */}
       {tab === "papers" && (
@@ -670,6 +674,124 @@ function BenchmarksView() {
           </CardContent>
         </Card>
       )}
+    </div>
+  );
+}
+
+// ─── Research Grounding ──────────────────────
+
+const groundingData = [
+  {
+    feature: "Observability Analyzer",
+    paper: "When Do World Models Successfully Learn Dynamical Systems?",
+    authors: "Barkmann et al.",
+    venue: "arXiv, Jul 2025",
+    url: "https://arxiv.org/abs/2507.04898",
+    insight: "World models fail if and only if the dynamical system lacks observability under the tokenization map. If a state variable causally affects transitions but never appears in rendered frames, no architecture can learn to predict it — regardless of scale or training data.",
+    implementation: "Our code analysis classifies every variable as causal vs. non-causal and observed vs. hidden via AST parsing. Hidden causal variables are flagged as fundamentally limiting. This is a direct computational implementation of the paper's observability criterion.",
+  },
+  {
+    feature: "Complexity Dimensions",
+    paper: "AutumnBench: Benchmarking World-Model Learning",
+    authors: "Rule et al.",
+    venue: "arXiv, Oct 2025",
+    url: "https://arxiv.org/abs/2510.19788",
+    insight: "Environment complexity is multidimensional — AutumnBench characterizes 43 environments across #Objects, #Latent variables, #Event handlers, Stochasticity, #Colors, and Grid size. Scaling compute improves performance in only 25 of 43 environments.",
+    implementation: "Our computed metrics align: objectCreationCount ≈ #Objects, stateVariables ≈ #Latent, collisionHandlers + timerEvents ≈ #Event handlers, colorCount ≈ #Colors. The composite score uses transparent weights, not a single LLM rating.",
+  },
+  {
+    feature: "Perception ≠ Function",
+    paper: "WorldArena: Evaluating Perception and Functionality in Embodied World Models",
+    authors: "Shang et al.",
+    venue: "arXiv, Feb 2026",
+    url: "https://arxiv.org/abs/2602.08971",
+    insight: "Across 14 models, visual quality (EWMScore) correlates only r=0.36 with action planning performance. High-fidelity video generation does not translate to embodied task capability.",
+    implementation: "This is why the Rollout Viewer shows architecture-specific failure signatures and degradation curves instead of visual fidelity scores. Visual quality is a poor proxy for what actually matters.",
+  },
+  {
+    feature: "Degradation Curves",
+    paper: "DIAMOND + LIVE",
+    authors: "Alonso et al., Yang et al.",
+    venue: "NeurIPS 2024 + NeurIPS 2025",
+    url: "https://arxiv.org/abs/2405.12399",
+    insight: "DIAMOND's EDM variant stays stable for 1000+ steps; DDPM degrades within 100. LIVE: all autoregressive baselines degrade past 64 frames; VRAG achieves SSIM 0.349 over 1200 frames. Compounding error is inherently irreducible.",
+    implementation: "Empirical curves are extracted from published figures and tables, parameterized by environment complexity. Each data point traces to a specific paper.",
+  },
+  {
+    feature: "Failure Signatures",
+    paper: "DIAMOND + IRIS + DreamerV3",
+    authors: "Various",
+    venue: "NeurIPS 2024, ICLR 2023, Nature 2025",
+    url: "https://arxiv.org/abs/2405.12399",
+    insight: "IRIS: inter-frame token inconsistency at ~30 steps (DIAMOND Fig 5). DreamerV3: progressive blurring at ~15-20 steps. DIAMOND: spatial drift in low-data regions at ~200 steps.",
+    implementation: "The failure catalog maps each mode to its onset step, triggering condition, and source paper. For a given environment's complexity profile, we highlight which failures are most likely.",
+  },
+  {
+    feature: "Architecture Profiles",
+    paper: "DreamerV3 + IRIS + DIAMOND + MuZero",
+    authors: "Hafner et al., Micheli et al., Alonso et al., Schrittwieser et al.",
+    venue: "Nature 2025, ICLR 2023, NeurIPS 2024, Nature 2020",
+    url: "https://www.nature.com/articles/s41586-025-08744-2",
+    insight: "DreamerV3: 150+ tasks with fixed hyperparams. IRIS: Atari 100K with 2x fewer params. DIAMOND: HNS 1.46 SOTA. MuZero: superhuman without game rules.",
+    implementation: "Architecture capability profiles in the Arch Picker are derived from these published benchmarks. Strengths on each dimension estimated from which environment types each architecture excels at.",
+  },
+];
+
+function ResearchGrounding() {
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-muted-foreground max-w-2xl">
+        Every computational feature in this tool maps to a specific paper or empirical finding.
+        This page documents those connections — what each paper established, and how we implemented it.
+      </p>
+
+      {groundingData.map((item, i) => (
+        <Card key={i} className="transition-all hover:border-primary/30">
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge variant="secondary" className="bg-primary/10 text-primary border-0 text-[10px] font-medium">
+                    {item.feature}
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">{item.venue}</span>
+                </div>
+                <a
+                  href={item.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm font-medium hover:text-primary transition-colors inline-flex items-center gap-1"
+                >
+                  {item.paper}
+                  <ExternalLink className="w-3 h-3 shrink-0 opacity-50" />
+                </a>
+                <p className="text-xs text-muted-foreground">{item.authors}</p>
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Key insight</span>
+                <p className="text-xs text-muted-foreground leading-relaxed">{item.insight}</p>
+              </div>
+              <div className="space-y-1">
+                <span className="text-[10px] font-medium text-primary uppercase tracking-wider">How we use it</span>
+                <p className="text-xs text-muted-foreground leading-relaxed">{item.implementation}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+
+      <Card className="bg-accent/30 border-dashed">
+        <CardContent className="p-3 text-[11px] text-muted-foreground">
+          <span className="font-medium">Note.</span> This tool implements ideas from published research but does not run actual world model inference.
+          Degradation curves are interpolated from published data, not measured on the generated environments.
+          Observability analysis uses heuristic AST parsing, not formal control-theoretic verification.
+          Architecture recommendations are derived from published benchmark results, not from head-to-head evaluation on your specific environment.
+          These are research-informed heuristics, not guarantees.
+        </CardContent>
+      </Card>
     </div>
   );
 }
